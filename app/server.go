@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strings"
 )
 
 func main() {
@@ -15,6 +16,7 @@ func main() {
 		fmt.Println("Failed to bind to port 6379")
 		os.Exit(1)
 	}
+	defer l.Close()
 
 	for {
 		conn, err := l.Accept()
@@ -22,11 +24,20 @@ func main() {
 			fmt.Println("Error accepting connection: ", err.Error())
 			os.Exit(1)
 		}
+		defer conn.Close()
 
 		go handleConnection(conn)
 	}
 }
 
 func handleConnection(conn net.Conn) {
+	buf := make([]byte, 1024)
+	_, err := conn.Read(buf)
+	if err != nil {
+		conn.Write([]byte(fmt.Sprintf("-Error %s\r\n", err.Error())))
+	}
 
+	if strings.Contains(string(buf), "PING\r\n") {
+		conn.Write([]byte("+PONG\r\n"))
+	}
 }
