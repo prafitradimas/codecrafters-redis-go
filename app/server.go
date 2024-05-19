@@ -2,15 +2,22 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"strings"
 )
 
-func main() {
-	// You can use print statements as follows for debugging, they'll be visible when running tests.
-	fmt.Println("Logs from your program will appear here!")
+const (
+	PING = "ping"
+	ECHO = "echo"
+	SET  = "set"
+	GET  = "get"
+)
 
+var storage = make(map[string]any)
+
+func main() {
 	l, err := net.Listen("tcp", "0.0.0.0:6379")
 	if err != nil {
 		fmt.Println("Failed to bind to port 6379")
@@ -25,19 +32,50 @@ func main() {
 			os.Exit(1)
 		}
 		defer conn.Close()
-
 		go handleConnection(conn)
 	}
 }
 
 func handleConnection(conn net.Conn) {
-	buf := make([]byte, 1024)
-	_, err := conn.Read(buf)
-	if err != nil {
-		conn.Write([]byte(fmt.Sprintf("-Error %s\r\n", err.Error())))
-	}
+	for {
+		buf := make([]byte, 1024)
+		_, err := conn.Read(buf)
+		if err != nil {
+			if err == io.EOF {
+				return
+			}
+			conn.Write([]byte(fmt.Sprintf("-Error %s\r\n", err.Error())))
+		}
 
-	if strings.Contains(string(buf), "PING\r\n") {
-		conn.Write([]byte("+PONG\r\n"))
+		commands := strings.Split(string(buf), "\r\n")
+		for i, v := range commands {
+			if strings.Contains(strings.ToLower(v), PING) {
+				conn.Write(encode("+", "PONG"))
+			} else if strings.Contains(strings.ToLower(v), ECHO) {
+				conn.Write(encode("$", commands[i+2]))
+			} else if strings.Contains(strings.ToLower(v), SET) {
+				slice := strings.Split(v, " ")
+				storage[slice[1]] = slice[2]
+				conn.Write(encode("+", "OK"))
+			} else if strings.Contains(strings.ToLower(v), GET) {
+				_, key, _ := strings.Cut(v, " ")
+				conn.Write(encode("$", storage[key].(string)))
+			}
+		}
 	}
+}
+
+func encode(firstbyte string, str string) []byte {
+	s := ""
+	switch firstbyte {
+	case "+":
+		s = fmt.Sprintf("+%s\r\n", str)
+	case "$":
+		if 0 == len(str) {
+			s = "$-1\r\n"
+		} else {
+			s = fmt.Sprintf("$%d\r\n%s\r\n", len(str), str)
+		}
+	}
+	return []byte(s)
 }
