@@ -15,7 +15,7 @@ const (
 	GET  = "get"
 )
 
-var storage = make(map[string]any)
+var storage = make(map[string]string)
 
 func main() {
 	l, err := net.Listen("tcp", "0.0.0.0:6379")
@@ -48,19 +48,33 @@ func handleConnection(conn net.Conn) {
 		}
 
 		commands := strings.Split(string(buf), "\r\n")
-		for i, v := range commands {
-			if strings.Contains(strings.ToLower(v), PING) {
+		n := len(commands)
+		i := 0
+
+		for n > i {
+			if strings.Contains(strings.ToLower(commands[i]), PING) {
 				conn.Write(encode("+", "PONG"))
-			} else if strings.Contains(strings.ToLower(v), ECHO) {
+			} else if strings.Contains(strings.ToLower(commands[i]), ECHO) {
 				conn.Write(encode("$", commands[i+2]))
-			} else if strings.Contains(strings.ToLower(v), SET) {
-				slice := strings.Split(v, " ")
-				storage[slice[1]] = slice[2]
+				i += 2
+				continue
+			} else if strings.Contains(strings.ToLower(commands[i]), SET) {
+				storage[commands[i+2]] = commands[i+4]
 				conn.Write(encode("+", "OK"))
-			} else if strings.Contains(strings.ToLower(v), GET) {
-				_, key, _ := strings.Cut(v, " ")
-				conn.Write(encode("$", storage[key].(string)))
+				i += 4
+				continue
+			} else if strings.Contains(strings.ToLower(commands[i]), GET) {
+				key := commands[i+2]
+				val, found := storage[key]
+				if !found {
+					val = ""
+				}
+				conn.Write(encode("$", val))
+				i += 2
+				continue
 			}
+
+			i += 1
 		}
 	}
 }
