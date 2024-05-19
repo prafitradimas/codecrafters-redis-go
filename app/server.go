@@ -5,7 +5,9 @@ import (
 	"io"
 	"net"
 	"os"
+	"strconv"
 	"strings"
+	"time"
 )
 
 const (
@@ -13,9 +15,14 @@ const (
 	ECHO = "echo"
 	SET  = "set"
 	GET  = "get"
+	PX   = "px"
 )
 
-var storage = make(map[string]string)
+var (
+	storage = make(map[string]string)
+	since   = make(map[string]time.Time)
+	expire  = make(map[string]int)
+)
 
 func main() {
 	l, err := net.Listen("tcp", "0.0.0.0:6379")
@@ -47,49 +54,57 @@ func handleConnection(conn net.Conn) {
 			conn.Write([]byte(fmt.Sprintf("-Error %s\r\n", err.Error())))
 		}
 
-		commands := strings.Split(string(buf), "\r\n")
-		n := len(commands)
-		i := 0
+		inputs := strings.Split(string(buf), "\r\n")
+		command := strings.ToLower(inputs[2])
+		if command == PING {
+			conn.Write([]byte("+PONG\r\n"))
+		} else if command == ECHO {
+			conn.Write([]byte(fmt.Sprintf("$%d\r\n%s\r\n", len(inputs[4]), inputs[4])))
+		} else if command == SET {
+			key := inputs[4]
+			value := inputs[6]
+			exp := 0
 
-		for n > i {
-			if strings.Contains(strings.ToLower(commands[i]), PING) {
-				conn.Write(encode("+", "PONG"))
-			} else if strings.Contains(strings.ToLower(commands[i]), ECHO) {
-				conn.Write(encode("$", commands[i+2]))
-				i += 2
-				continue
-			} else if strings.Contains(strings.ToLower(commands[i]), SET) {
-				storage[commands[i+2]] = commands[i+4]
-				conn.Write(encode("+", "OK"))
-				i += 4
-				continue
-			} else if strings.Contains(strings.ToLower(commands[i]), GET) {
-				key := commands[i+2]
-				val, found := storage[key]
-				if !found {
-					val = ""
-				}
-				conn.Write(encode("$", val))
-				i += 2
-				continue
+			if len(inputs) > 8 {
+				atoi, _ := strconv.Atoi(inputs[10])
+				exp = atoi
 			}
-
-			i += 1
+			handleSet(key, value, exp)
+			conn.Write([]byte("+OK\r\n"))
+		} else if command == GET {
+			result := handleGet(inputs[4])
+			if result == "" {
+				conn.Write([]byte("$-1\r\n"))
+			} else {
+				conn.Write([]byte(fmt.Sprintf("$%d\r\n%s\r\n", len(result), result)))
+			}
 		}
 	}
 }
 
-func encode(firstbyte string, str string) []byte {
-	s := ""
-	switch firstbyte {
-	case "+":
-		s = fmt.Sprintf("+%s\r\n", str)
-	case "$":
-		if 0 == len(str) {
-			s = "$-1\r\n"
-		} else {
-			s = fmt.Sprintf("$%d\r\n%s\r\n", len(str), str)
+func handleGet(key string) string {
+	data, found1 := storage[key]
+	if found1 {
+		exp, found2 := expire[key]
+		sincetime := since[key]
+		if found2 && time.Now().After(sincetime.Add(time.Duration(exp*int(time.Millisecond)))) {
+			delete(storage, key)
+			delete(since, key)
+			delete(expire, key)
+
+			return ""
 		}
 	}
-	return []byte(s)
+
+	return data
+}
+
+func handleSet(key string, value string, exp int) string {
+	storage[key] = value
+	since[key] = time.Now()
+	if exp != 0 {
+		expire[key] = exp
+	}
+
+	return "OK"
 }
